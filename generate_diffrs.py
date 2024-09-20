@@ -47,7 +47,6 @@ def diffrs_sampler(
         bool_zero = lst_idx == 0
         print(x_cur[bool_zero].device)
         print(t_steps[lst_idx][bool_zero].device)
-        print(net.img_resolution.device)
         print(time_min.device)
         print(time_max.device)
         print(labels.device)
