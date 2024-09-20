@@ -76,9 +76,11 @@ def get_grad_log_ratio(discriminator, vpsde, unnormalized_input, std_wve_t, img_
 
     if log_only:
         x_ = input.float().clone().detach()
+        print(x_.device)
         if img_resolution == 64: # ADM trained UNet classifier for 64x64 with Cosine VPSDE
             tau = vpsde.compute_t_cos_from_t_lin(tau)
         tau = torch.ones(input.shape[0], device=tau.device) * tau
+        print(tau.device)
         log_ratio = get_log_ratio(discriminator, x_, tau, class_labels)
         return log_ratio
     with torch.enable_grad():
@@ -100,6 +102,8 @@ def get_log_ratio(discriminator, input, time, class_labels):
     if discriminator == None:
         return torch.zeros(input.shape[0], device=input.device)
     else:
+        print(input.device)
+        print(type(time))
         log_ratio = discriminator(input, timesteps=time, condition=class_labels)
         # prediction = torch.clip(logits, 1e-5, 1. - 1e-5)
         # log_ratio = torch.log(prediction / (1. - prediction))
