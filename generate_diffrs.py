@@ -3,7 +3,6 @@ import os
 os.environ['PT_HPU_LAZY_MODE'] = '0'
 import habana_frameworks.torch.core as htcore
 import habana_frameworks.torch.distributed.hccl
-torch.distributed.init_process_group(backend='hccl')
 
 import click
 from tqdm.auto import tqdm
@@ -17,6 +16,9 @@ from torchvision.utils import make_grid, save_image
 import classifier_lib
 import random
 import time
+
+
+torch.distributed.init_process_group(backend='hccl')
 
 #----------------------------------------------------------------------------
 # Proposed DiffRS sampler.
