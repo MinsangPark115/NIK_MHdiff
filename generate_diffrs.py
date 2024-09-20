@@ -260,8 +260,8 @@ def diffrs_sampler(
     # Main sampling loop.
     x_next = latents.to(torch.float64) * t_steps[0]
     lst_idx = torch.zeros((latents.shape[0],), device=latents.device).long()
-    log_ratio_prev = torch.zeros((latents.shape[0],))
-    per_sample_nfe = torch.zeros((latents.shape[0],)).long()
+    log_ratio_prev = torch.zeros((latents.shape[0],), device=latents.device)
+    per_sample_nfe = torch.zeros((latents.shape[0],), device=latents.device).long()
 
     pbar = tqdm(desc='Number of re-init. samples')
 
