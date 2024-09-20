@@ -157,6 +157,7 @@ class vpsde():
     def antiderivative(self, t, stabilizing_constant=0.):
         if isinstance(t, float) or isinstance(t, int):
             t = torch.tensor(t, device=batch_device).float()
+            print(t.device)
         return torch.log(1. - torch.exp(- self.integral_beta(t)) + stabilizing_constant) + self.integral_beta(t)
 
     def normalizing_constant(self, t_min):
