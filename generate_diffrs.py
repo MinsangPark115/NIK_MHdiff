@@ -287,7 +287,8 @@ def diffrs_sampler(
                 x_fin[total_samples % batch_size:total_samples % batch_size + bool_fin.sum()] = x_next[bool_fin]
                 total_samples += bool_fin.sum()
             x_next[bool_fin] = torch.randn_like(x_next[bool_fin]).to(torch.float64) * t_steps[0]
-            lst_idx[bool_fin] = torch.zeros_like(lst_idx[bool_fin])
+            print(lst_idx[bool_fin].device)
+            lst_idx[bool_fin] = torch.zeros_like(lst_idx[bool_fin]).long()
             log_ratio_prev[bool_fin] = torch.zeros_like(log_ratio_prev[bool_fin])
 
             tot_per_sample_nfe += per_sample_nfe[bool_fin].tolist()
