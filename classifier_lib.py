@@ -100,9 +100,6 @@ def get_log_ratio(discriminator, input, time, class_labels):
     if discriminator == None:
         return torch.zeros(input.shape[0], device=input.device)
     else:
-        print(input.device)
-        print(time.device)
-        print(class_labels)
         log_ratio = discriminator(input, timesteps=time, condition=class_labels)
         # prediction = torch.clip(logits, 1e-5, 1. - 1e-5)
         # log_ratio = torch.log(prediction / (1. - prediction))
