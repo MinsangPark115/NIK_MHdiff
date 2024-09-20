@@ -48,7 +48,7 @@ def diffrs_sampler(
         pp = [discriminator, vpsde, x_cur[bool_zero], t_steps[lst_idx][bool_zero], net.img_resolution, time_min, time_max, labels]
         for jjj in pp:
             print(type(jjj))
-            if type(jjj)=torch.tensor:
+            if type(jjj)==torch.tensor:
                 print(jjj.device)
         if warmup:
             if bool_zero.sum() != 0:
