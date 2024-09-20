@@ -80,7 +80,6 @@ def get_grad_log_ratio(discriminator, vpsde, unnormalized_input, std_wve_t, img_
             tau = vpsde.compute_t_cos_from_t_lin(tau)
         tau = torch.ones(input.shape[0], device=tau.device) * tau
         log_ratio = get_log_ratio(discriminator, x_, tau, class_labels)
-        print(log_ratio)
         return log_ratio
     with torch.enable_grad():
         x_ = input.float().clone().detach().requires_grad_()

@@ -45,8 +45,7 @@ def diffrs_sampler(
         x_cur = x_next
 
         bool_zero = lst_idx == 0
-        print(x_cur[bool_zero].device)
-        print(t_steps[lst_idx][bool_zero].device)
+
         if warmup:
             if bool_zero.sum() != 0:
                 log_ratio_prev[bool_zero] = classifier_lib.get_grad_log_ratio(discriminator, vpsde, x_cur[bool_zero], t_steps[lst_idx][bool_zero], net.img_resolution, time_min, time_max, labels, log_only=True).detach().cpu()
@@ -217,8 +216,8 @@ def diffrs_sampler(
         lst_adaptive2 = [[] for i in range(len(t_steps))]
         x_next = latents.to(torch.float64) * t_steps[0]
         lst_idx = torch.zeros((latents.shape[0],), device=latents.device).long()
-        log_ratio_prev = torch.zeros((latents.shape[0],))
-        per_sample_nfe = torch.zeros((latents.shape[0],)).long()
+        log_ratio_prev = torch.zeros((latents.shape[0],), device=latents.device)
+        per_sample_nfe = torch.zeros((latents.shape[0],), device=latents.device).long()
         num_warm = 0
         while num_warm < iter_warmup:
             x_next, lst_idx, log_ratio_prev, per_sample_nfe = sampling_loop(x_next, lst_idx, log_ratio_prev, per_sample_nfe, class_labels, warmup=True)
