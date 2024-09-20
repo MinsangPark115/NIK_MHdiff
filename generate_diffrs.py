@@ -51,14 +51,14 @@ def diffrs_sampler(
                 log_ratio_prev[bool_zero] = log_ratio_prev[bool_zero].detach()
 
                 for i in range(len(log_ratio_prev[bool_zero])):
-                    lst_adaptive[0].append(log_ratio_prev[bool_zero][i].cpu())
+                    lst_adaptive[0].append(log_ratio_prev[bool_zero][i])
         else:
             if min_backsteps == 0:
                 while bool_zero.sum() != 0:
                     x_check = x_cur[bool_zero]
                     labels_ = labels[bool_zero] if labels is not None else None
                     log_ratio_prev_check = log_ratio_prev[bool_zero]
-                    log_ratio = classifier_lib.get_grad_log_ratio(discriminator, vpsde, x_check, t_steps[lst_idx][bool_zero], net.img_resolution, time_min, time_max, labels_, log_only=True).detach().cpu()
+                    log_ratio = classifier_lib.get_grad_log_ratio(discriminator, vpsde, x_check, t_steps[lst_idx][bool_zero], net.img_resolution, time_min, time_max, labels_, log_only=True).detach()
                     bool_neg_log_ratio = log_ratio < adaptive[lst_idx][bool_zero] + torch.log(torch.rand_like(log_ratio) + 1e-7)
                     bool_reject = torch.arange(len(bool_zero), device=bool_zero.device)[bool_zero][bool_neg_log_ratio]
                     bool_accept = torch.arange(len(bool_zero), device=bool_zero.device)[bool_zero][~bool_neg_log_ratio]
@@ -113,9 +113,9 @@ def diffrs_sampler(
             assert adaptive_pickle == 'None'
             log_ratio = classifier_lib.get_grad_log_ratio(discriminator, vpsde, x_next, t_steps[lst_idx], net.img_resolution, time_min, time_max, labels, log_only=True).detach()
             for i in range(len(log_ratio)):
-                lst_adaptive[lst_idx[i]].append(log_ratio[i].cpu())
+                lst_adaptive[lst_idx[i]].append(log_ratio[i])
             for i in range(len(log_ratio)):
-                lst_adaptive2[lst_idx[i]].append(log_ratio[i].cpu() - log_ratio_prev[i].cpu())
+                lst_adaptive2[lst_idx[i]].append(log_ratio[i]) - log_ratio_prev[i]
             log_ratio_prev = log_ratio[:]
             return x_next, lst_idx, log_ratio_prev, per_sample_nfe
 
@@ -128,7 +128,7 @@ def diffrs_sampler(
                 x_check = x_next[bool_check]
                 labels_ = labels[bool_check] if labels is not None else None
                 log_ratio_prev_check = log_ratio_prev[bool_check]
-                log_ratio = classifier_lib.get_grad_log_ratio(discriminator, vpsde, x_check, t_steps[lst_idx][bool_check], net.img_resolution, time_min, time_max, labels_, log_only=True).detach().cpu()
+                log_ratio = classifier_lib.get_grad_log_ratio(discriminator, vpsde, x_check, t_steps[lst_idx][bool_check], net.img_resolution, time_min, time_max, labels_, log_only=True).detach()
                 if count == 0:
                     bool_neg_log_ratio = log_ratio < adaptive2[lst_idx][bool_check] + torch.log(torch.rand_like(log_ratio) + 1e-7) + log_ratio_prev_check
                 else:
@@ -159,7 +159,7 @@ def diffrs_sampler(
                 bool_check[lst_idx <= min_backsteps] = False
                 bool_check[bool_accept] = False
 
-        bool_check2 = per_sample_nfe + (num_steps * 2 - 1 - lst_idx.cpu() * 2) > max_iter
+        bool_check2 = per_sample_nfe + (num_steps * 2 - 1 - lst_idx * 2) > max_iter
         if bool_check2.sum() != 0:
             pbar.update(bool_check2.sum().item())
             eps_rand = randn_like(x_next[bool_check2])
@@ -242,14 +242,14 @@ def diffrs_sampler(
             lst_adaptive = pickle.load(f)
         with open(adaptive_pickle2, 'rb') as f:
             lst_adaptive2 = pickle.load(f)
-    adaptive = torch.zeros_like(t_steps).cpu()
+    adaptive = torch.zeros_like(t_steps)
     for k in range(len(t_steps)):
         if no_zero:
             adaptive[k] = torch.quantile(lst_adaptive[k], rej_percentile).item()
         else:
             adaptive[k] = max(0., torch.quantile(lst_adaptive[k], rej_percentile).item())
     print(adaptive)
-    adaptive2 = torch.zeros_like(t_steps).cpu()
+    adaptive2 = torch.zeros_like(t_steps)
     for k in range(len(t_steps)):
         if no_zero:
             adaptive2[k] = torch.quantile(lst_adaptive2[k], rej_percentile).item()
