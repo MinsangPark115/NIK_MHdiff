@@ -45,6 +45,7 @@ def diffrs_sampler(
         x_cur = x_next
 
         bool_zero = lst_idx == 0
+        print(next(discriminator.parameters()).device, next(vpsde.parameters()).device, x_cur[bool_zero].device, t_steps[lst_idx][bool_zero].device, net.img_resolution.device, time_min.device, time_max.device, labels.device)
         if warmup:
             if bool_zero.sum() != 0:
                 log_ratio_prev[bool_zero] = classifier_lib.get_grad_log_ratio(discriminator, vpsde, x_cur[bool_zero], t_steps[lst_idx][bool_zero], net.img_resolution, time_min, time_max, labels, log_only=True).detach().cpu()
