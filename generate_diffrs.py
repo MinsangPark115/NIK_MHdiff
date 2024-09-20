@@ -1,4 +1,10 @@
 import os
+
+os.environ['PT_HPU_LAZY_MODE'] = '0'
+import habana_frameworks.torch.core as htcore
+import habana_frameworks.torch.distributed.hccl
+torch.distributed.init_process_group(backend='hccl')
+
 import click
 from tqdm.auto import tqdm
 import pickle
@@ -330,7 +336,7 @@ def diffrs_sampler(
 @click.option('--seed',                    help='Seed number',                 metavar='INT',                       type=click.IntRange(min=0), default=0, show_default=True)
 @click.option('--num_samples',             help='Num samples',                 metavar='INT',                       type=click.IntRange(min=1), default=50000, show_default=True)
 @click.option('--save_type',               help='png or npz',                  metavar='png|npz',                   type=click.Choice(['png', 'npz']), default='npz')
-@click.option('--device',                  help='Device', metavar='STR',                                            type=str, default='cuda:0')
+@click.option('--device',                  help='Device', metavar='STR',                                            type=str, default='hpu')
 
 ## DG configuration
 @click.option('--time_min',                help='Minimum time[0,1] to apply DG', metavar='FLOAT',                   type=click.FloatRange(min=0., max=1.), default=0.01, show_default=True)
