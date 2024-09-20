@@ -3,7 +3,7 @@ from guided_diffusion.script_util import create_classifier
 import os
 import numpy as np
 
-def get_discriminator(latent_extractor_ckpt, discriminator_ckpt, condition, img_resolution=32, device='cuda', enable_grad=True, depth=2):
+def get_discriminator(latent_extractor_ckpt, discriminator_ckpt, condition, img_resolution=32, device='hpu', enable_grad=True, depth=2):
     classifier = load_classifier(latent_extractor_ckpt, img_resolution, device, eval=True)
     discriminator = load_discriminator(discriminator_ckpt, device, condition, depth=depth, eval=True)
     def evaluate(perturbed_inputs, timesteps=None, condition=None):
