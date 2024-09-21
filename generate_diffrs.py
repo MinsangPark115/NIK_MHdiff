@@ -1,6 +1,6 @@
 import os
 
-os.environ['PT_HPU_LAZY_MODE'] = '0'
+# os.environ['PT_HPU_LAZY_MODE'] = '0'
 os.environ['RANK'] = "0"
 import habana_frameworks.torch.core as htcore
 import habana_frameworks.torch.distributed.hccl
