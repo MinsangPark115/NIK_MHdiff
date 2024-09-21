@@ -399,7 +399,7 @@ def main(boosting, time_min, time_max, rej_percentile, cond, pretrained_classifi
         random.seed(0)
         np.random.seed(0)
         torch.manual_seed(0)
-        torch.cuda.manual_seed_all(0)
+        torch.hpu.manual_seed_all(0)
     ## Pick latents and labels.
     latents = torch.randn([batch_size, net.img_channels, net.img_resolution, net.img_resolution], device=device)
     class_labels = None
