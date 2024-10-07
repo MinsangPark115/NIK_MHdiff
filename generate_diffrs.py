@@ -171,7 +171,7 @@ def diffrs_sampler(
             lst_idx[bool_check2] = 0
             per_sample_nfe[bool_check2] = 0
 
-        return x_next, lst_idx, log_ratio_prev, per_sample_nfe
+        return x_next, lst_idx.to(torch.int32), log_ratio_prev, per_sample_nfe.to(torch.int32)
 
     def save_img(images, index, save_type="npz", batch_size=100):
         ## Save images.
@@ -292,7 +292,6 @@ def diffrs_sampler(
                 x_fin[total_samples % batch_size:total_samples % batch_size + bool_fin.sum()] = x_next[bool_fin]
                 total_samples += bool_fin.sum()
             x_next[bool_fin] = torch.randn_like(x_next[bool_fin]).to(torch.float32) * t_steps[0]
-            print(x_next.dtype, flush = True)
             print(bool_fin, flush = True)
             print(lst_idx, flush = True)
             lst_idx[bool_fin] = torch.zeros_like(lst_idx[bool_fin]).long()
