@@ -38,6 +38,8 @@ def diffrs_sampler(
     S_noise_vec = torch.tensor([S_noise] * latents.shape[0], device=latents.device)
     gamma_vec = torch.minimum(S_churn_vec / num_steps, S_churn_max)
 
+    print(S_churn_vec.dtype, S_churn_max.dtype, S_noise_vec.dtype, gamma_vec.dtype)
+
     def sampling_loop(x_next, lst_idx, log_ratio_prev, per_sample_nfe, labels, warmup=False):
         t_cur = t_steps[lst_idx]
         t_next = t_steps[lst_idx+1]
