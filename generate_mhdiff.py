@@ -1,10 +1,14 @@
+# Copyright (c) 2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# This work is licensed under a Creative Commons
+# Attribution-NonCommercial-ShareAlike 4.0 International License.
+# You should have received a copy of the license along with this
+# work. If not, see http://creativecommons.org/licenses/by-nc-sa/4.0/
+
+"""Generate random images using the techniques described in the paper
+"Elucidating the Design Space of Diffusion-Based Generative Models"."""
+
 import os
-
-os.environ['PT_HPU_LAZY_MODE'] = '0'
-os.environ['RANK'] = "0"
-import habana_frameworks.torch.core as htcore
-import habana_frameworks.torch.distributed.hccl
-
 import click
 from tqdm.auto import tqdm
 import pickle
@@ -18,77 +22,56 @@ import classifier_lib
 import random
 import time
 
-
-torch.distributed.init_process_group(backend='hccl')
-
 #----------------------------------------------------------------------------
-# Proposed DiffRS sampler.
+# Proposed EDM-G++ sampler.
 
-def diffrs_sampler(
-    boosting, time_min, time_max, vpsde, rej_percentile, discriminator,
+def edm_sampler(
+    boosting, time_min, time_max, vpsde, dg_weight_1st_order, dg_weight_2nd_order, discriminator,
     net, latents, class_labels=None, randn_like=torch.randn_like,
     num_steps=18, sigma_min=0.002, sigma_max=80, rho=7,
     S_churn=0, S_min=0, S_max=float('inf'), S_noise=1,
     backsteps=0, min_backsteps=0, max_backsteps=18, mode='default', outdir=None, adaptive_pickle=None, adaptive_pickle2=None,
-    class_idx=None, batch_size=100, num_samples=50000, iter_warmup=10, max_iter=999999, no_zero=0,
+    class_idx=None, batch_size=100, num_samples=50000, iter_warmup=10, max_iter=999999, do_seed=1, snr=0, litrs=0,
 ):
-
-    S_churn_vec = torch.tensor([S_churn] * latents.shape[0], device=latents.device)
-    S_churn_max = torch.tensor([np.sqrt(2) - 1] * latents.shape[0], device=latents.device)
-    S_noise_vec = torch.tensor([S_noise] * latents.shape[0], device=latents.device)
-    gamma_vec = torch.minimum(S_churn_vec / num_steps, S_churn_max)
 
     def sampling_loop(x_next, lst_idx, log_ratio_prev, per_sample_nfe, labels, warmup=False):
         t_cur = t_steps[lst_idx]
         t_next = t_steps[lst_idx+1]
 
         x_cur = x_next
+        t_hat = t_cur
+        x_hat = x_cur
 
         bool_zero = lst_idx == 0
         if warmup:
             if bool_zero.sum() != 0:
-                log_ratio_prev[bool_zero] = classifier_lib.get_grad_log_ratio(discriminator, vpsde, x_cur[bool_zero], t_steps[lst_idx][bool_zero], net.img_resolution, time_min, time_max, labels, log_only=True)
-                log_ratio_prev[bool_zero] = log_ratio_prev[bool_zero].detach()
+                log_ratio_prev[bool_zero] = classifier_lib.get_grad_log_ratio(discriminator, vpsde, x_cur[bool_zero], t_steps[lst_idx][bool_zero], net.img_resolution, time_min, time_max, labels, log_only=True).detach().cpu()
 
                 for i in range(len(log_ratio_prev[bool_zero])):
-                    lst_adaptive[0].append(log_ratio_prev[bool_zero][i])
+                    lst_adaptive[0].append(log_ratio_prev[bool_zero][i].cpu())
         else:
             if min_backsteps == 0:
                 while bool_zero.sum() != 0:
                     x_check = x_cur[bool_zero]
                     labels_ = labels[bool_zero] if labels is not None else None
                     log_ratio_prev_check = log_ratio_prev[bool_zero]
-                    log_ratio = classifier_lib.get_grad_log_ratio(discriminator, vpsde, x_check, t_steps[lst_idx][bool_zero], net.img_resolution, time_min, time_max, labels_, log_only=True).detach()
+                    log_ratio = classifier_lib.get_grad_log_ratio(discriminator, vpsde, x_check, t_steps[lst_idx][bool_zero], net.img_resolution, time_min, time_max, labels_, log_only=True).detach().cpu()
                     bool_neg_log_ratio = log_ratio < adaptive[lst_idx][bool_zero] + torch.log(torch.rand_like(log_ratio) + 1e-7)
                     bool_reject = torch.arange(len(bool_zero), device=bool_zero.device)[bool_zero][bool_neg_log_ratio]
                     bool_accept = torch.arange(len(bool_zero), device=bool_zero.device)[bool_zero][~bool_neg_log_ratio]
 
                     if bool_neg_log_ratio.sum() != 0:
-                        eps_rand = randn_like(x_check[bool_neg_log_ratio])
+                        eps_rand = torch.randn_like(x_check[bool_neg_log_ratio]).to(torch.float64)
+                        eps_rand = torch.randn_like(x_check[bool_neg_log_ratio]).to(torch.float64)
                         x_back = t_steps[0] * eps_rand
-                        x_cur[bool_reject] = x_back
+                        x_hat[bool_reject] = x_back
 
                     log_ratio_prev_check[~bool_neg_log_ratio] = log_ratio[~bool_neg_log_ratio]
                     log_ratio_prev[bool_zero] = log_ratio_prev_check
                     bool_zero[bool_accept] = False
 
-        bool_gamma = (S_min <= t_cur) & (t_cur <= S_max)
-
-        if bool_gamma.sum() != 0:
-            t_hat_temp = net.round_sigma(t_cur + gamma_vec * t_cur)[bool_gamma]
-            x_hat_temp = x_cur[bool_gamma] + (t_hat_temp ** 2 - t_cur[bool_gamma] ** 2).sqrt()[:, None, None, None] * S_noise_vec[bool_gamma, None, None,None] * randn_like(x_cur[bool_gamma])
-
-            t_hat = t_cur
-            x_hat = x_cur
-
-            t_hat[bool_gamma] = t_hat_temp
-            x_hat[bool_gamma] = x_hat_temp
-        else:
-            t_hat = t_cur
-            x_hat = x_cur
-
         # Euler step.
-        denoised = net(x_hat, t_hat, labels).to(torch.float32)
+        denoised = net(x_hat, t_hat, labels).to(torch.float64)
         per_sample_nfe += 1
         if mode == 'debug':
             nonlocal total_nfe
@@ -100,7 +83,7 @@ def diffrs_sampler(
         bool_2nd = lst_idx < num_steps - 1
         if bool_2nd.sum() != 0:
             labels_ = labels[bool_2nd] if labels is not None else None
-            denoised = net(x_next[bool_2nd], t_next[bool_2nd], labels_).to(torch.float32)
+            denoised = net(x_next[bool_2nd], t_next[bool_2nd], labels_).to(torch.float64)
             per_sample_nfe[bool_2nd] += 1
             if mode == 'debug':
                 total_nfe += len(denoised)
@@ -111,65 +94,72 @@ def diffrs_sampler(
 
         if warmup:
             assert adaptive_pickle == 'None'
-            log_ratio = classifier_lib.get_grad_log_ratio(discriminator, vpsde, x_next, t_steps[lst_idx], net.img_resolution, time_min, time_max, labels, log_only=True).detach()
+            log_ratio = classifier_lib.get_grad_log_ratio(discriminator, vpsde, x_next, t_steps[lst_idx], net.img_resolution, time_min, time_max, labels, log_only=True).detach().cpu()
             for i in range(len(log_ratio)):
-                lst_adaptive[lst_idx[i]].append(log_ratio[i])
+                lst_adaptive[lst_idx[i]].append(log_ratio[i].cpu())
             for i in range(len(log_ratio)):
-                lst_adaptive2[lst_idx[i]].append(log_ratio[i]) - log_ratio_prev[i]
+                lst_adaptive2[lst_idx[i]].append(log_ratio[i].cpu() - log_ratio_prev[i].cpu())
             log_ratio_prev = log_ratio[:]
             return x_next, lst_idx, log_ratio_prev, per_sample_nfe
 
         if backsteps != 0.:
-            bool_check = (lst_idx > min_backsteps) & (lst_idx <= max_backsteps)
+            bool_check = (lst_idx > min_backsteps) & (lst_idx <= max_backsteps) # img step이 min, max backstep 내에 있는지 확인
+            bool_check_idx = torch.arange(len(lst_idx), device=bool_check.device)[bool_check] # img step이 min, max backstep 내에 있는 img index들
             if mode == 'debug':
                 save_lst_idx = copy.deepcopy(lst_idx)
-            count = 0
-            while bool_check.sum() != 0:
-                x_check = x_next[bool_check]
-                labels_ = labels[bool_check] if labels is not None else None
-                log_ratio_prev_check = log_ratio_prev[bool_check]
-                log_ratio = classifier_lib.get_grad_log_ratio(discriminator, vpsde, x_check, t_steps[lst_idx][bool_check], net.img_resolution, time_min, time_max, labels_, log_only=True).detach()
-                if count == 0:
-                    bool_neg_log_ratio = log_ratio < adaptive2[lst_idx][bool_check] + torch.log(torch.rand_like(log_ratio) + 1e-7) + log_ratio_prev_check
-                else:
-                    bool_neg_log_ratio = log_ratio < adaptive[lst_idx][bool_check] + torch.log(torch.rand_like(log_ratio) + 1e-7)
-                bool_reject = torch.arange(len(bool_check), device=bool_check.device)[bool_check][bool_neg_log_ratio]
-                bool_accept = torch.arange(len(bool_check), device=bool_check.device)[bool_check][~bool_neg_log_ratio]
+            if bool_check.sum() != 0:
+                x_check = x_next[bool_check].clone().detach() # x_next (edm sampling 된 이미지) 가 check 대상인지 확인
+                labels_ = labels[bool_check] if labels is not None else None # 이미지에 대한 class label
+                log_ratio_prev_check = log_ratio_prev[bool_check] # log_ratio (algorithm에서 L_t)
+                log_ratio = classifier_lib.get_grad_log_ratio(discriminator, vpsde, x_check, t_steps[lst_idx][bool_check], net.img_resolution, time_min, time_max, labels_, log_only=True).detach().cpu() # L_t-1
+                bool_neg_log_ratio = log_ratio < adaptive2[lst_idx][bool_check] + torch.log(torch.rand_like(log_ratio) + 1e-7) + log_ratio_prev_check # log(L_t-1)<log(M_t-1) + log(u) + log(L_t) 면 Reject 
+                bool_reject = torch.arange(len(bool_check), device=bool_check.device)[bool_check][bool_neg_log_ratio] # reject sample
+                bool_accept = torch.arange(len(bool_check), device=bool_check.device)[bool_check][~bool_neg_log_ratio] # accept sample
+                log_ratio_prev[bool_accept] = log_ratio[~bool_neg_log_ratio] # accetp log_ratio_prev 저장
 
-                if bool_neg_log_ratio.sum() != 0:
-                    eps_rand = randn_like(x_check[bool_neg_log_ratio])
-                    x_back = x_check[bool_neg_log_ratio] + (t_steps[lst_idx - backsteps][bool_check] ** 2 - t_steps[lst_idx][bool_check] ** 2).sqrt()[bool_neg_log_ratio][:, None, None, None] * eps_rand
-                    x_next[bool_reject] = x_back
-                    lst_idx[bool_reject] = lst_idx[bool_reject] - backsteps
+                if bool_neg_log_ratio.sum() != 0: # reject할 게 있으면
+                    labels_reject = labels[bool_reject] if labels is not None else None # reject image에 대한 class label
+                    lst_idx[bool_reject] = lst_idx[bool_reject] - backsteps # backstep만큼 noise를 줄 예정
 
-                if mode == 'debug':
-                    for i in range(len(save_lst_idx[bool_check & (lst_idx <= min_backsteps)])):
-                        from_num = save_lst_idx[bool_check & (lst_idx <= min_backsteps)][i]
-                        to_num = lst_idx[bool_check & (lst_idx <= min_backsteps)][i]
-                        dict_nfe['dict_nfe'][f'{from_num}_{to_num}'] = dict_nfe['dict_nfe'].get(f'{from_num}_{to_num}', 0) + 1
-                    if count != 0:
-                        for i in range(len(save_lst_idx[bool_check][~bool_neg_log_ratio])):
-                            from_num = save_lst_idx[bool_check][~bool_neg_log_ratio][i]
-                            to_num = lst_idx[bool_check][~bool_neg_log_ratio][i]
-                            dict_nfe['dict_nfe'][f'{from_num}_{to_num}'] = dict_nfe['dict_nfe'].get(f'{from_num}_{to_num}', 0) + 1
-                count += 1
+                    eps_rand = randn_like(x_check[bool_neg_log_ratio]) # eps ~ N(0, I)
+                    x_back = x_next[bool_check][bool_neg_log_ratio] + (t_steps[lst_idx[bool_reject]] ** 2 - t_steps[lst_idx[bool_reject] + backsteps] ** 2).sqrt()[:, None, None, None] * eps_rand # t - 1 에서 t - 1 + backstep 만큼 noise 주기
+                    log_ratio_back = classifier_lib.get_grad_log_ratio(discriminator, vpsde, x_back, t_steps[lst_idx][bool_check][bool_neg_log_ratio], net.img_resolution, time_min, time_max, labels_reject, log_only=True).detach().cpu() # L_t-1+backstep 계산
+                    if litrs != 0: # MH sampling 진행한다면
+                        denoised = net(x_back, t_steps[lst_idx][bool_check][bool_neg_log_ratio], labels_reject).to(torch.float64) # D(x_t-1+backstep , sigma)
+                        per_sample_nfe[bool_reject] += 1 # Network 통과로 nfe += 1
+                        d_cur = - (x_back - denoised) / (t_steps[lst_idx][bool_check][bool_neg_log_ratio][:, None, None, None] ** 2) # score 값 at x_t-1+backstep, EDM (3) 식
+                        mu_cur = x_back + (t_steps[lst_idx[bool_reject]] ** 2 - t_steps[lst_idx[bool_reject] + backsteps] ** 2)[:, None, None, None] * d_cur # mean of marginal , NCSN++ (47) 식
+                    log_ratio_prev[bool_reject] = log_ratio_back.clone().detach() # reject 대상 log_ratio_prev를 L_t-1+backstep으로 바꿈
+                    x_check[bool_neg_log_ratio] = x_back.clone().detach() # check 대상을 x_t-1+backstep으로 바꿈
 
-                log_ratio_prev_check[~bool_neg_log_ratio] = log_ratio[~bool_neg_log_ratio]
-                log_ratio_prev[bool_check] = log_ratio_prev_check
-                bool_check[lst_idx <= min_backsteps] = False
-                bool_check[bool_accept] = False
+                    for _ in range(litrs): # MH sampling litrs만큼 진행
+                        eps_rand = randn_like(x_check[bool_neg_log_ratio]) # eps ~ N(0,I)
+                        x_back = x_next[bool_check][bool_neg_log_ratio] + (t_steps[lst_idx[bool_reject]] ** 2 - t_steps[lst_idx[bool_reject] + backsteps] ** 2).sqrt()[:, None, None, None] * eps_rand # backward 보냄 (위와 동일)
+                        log_ratio_back = classifier_lib.get_grad_log_ratio(discriminator, vpsde, x_back, t_steps[lst_idx][bool_check][bool_neg_log_ratio], net.img_resolution, time_min, time_max, labels_reject, log_only=True).detach().cpu()
+                        denoised = net(x_back, t_steps[lst_idx][bool_check][bool_neg_log_ratio], labels_reject).to(torch.float64) # 위와 동일
+                        per_sample_nfe[bool_reject] += 1 # 위와 동일
+                        d_back = - (x_back - denoised) / (t_steps[lst_idx][bool_check][bool_neg_log_ratio][:, None, None, None] ** 2) # 위와 동일
+                        mu_back = x_back + (t_steps[lst_idx[bool_reject]] ** 2 - t_steps[lst_idx[bool_reject] + backsteps] ** 2)[:, None, None, None] * d_back # 위와 동일
 
-        bool_check2 = per_sample_nfe + (num_steps * 2 - 1 - lst_idx * 2) > max_iter
-        if bool_check2.sum() != 0:
-            pbar.update(bool_check2.sum().item())
-            eps_rand = randn_like(x_next[bool_check2])
-            x_next[bool_check2] = t_steps[0] * eps_rand
-            lst_idx[bool_check2] = 0
-            per_sample_nfe[bool_check2] = 0
+                        log_kernel_ratio = (mu_cur * (2 * x_next[bool_check][bool_neg_log_ratio] - mu_cur)).sum(dim=(1,2,3)) - (mu_back * (2 * x_next[bool_check][bool_neg_log_ratio] - mu_back)).sum(dim=(1,2,3)) # score network 내 norm 부분 먼저 계산, - 지우고 분모에 있는 norm - 분자에 있는 norm 계산
+                        log_kernel_ratio = (log_kernel_ratio / (2 * (t_steps[lst_idx[bool_reject]] ** 2 - t_steps[lst_idx[bool_reject] + backsteps] ** 2) * (t_steps[lst_idx[bool_reject] + backsteps] ** 2 / t_steps[lst_idx[bool_reject]] ** 2))).cpu() # 2sigma^2으로 나눠주는 부분, NCSN++ (47) 식
+                        log_ratio_mph = log_ratio_back - log_ratio_prev[bool_check][bool_neg_log_ratio] + log_kernel_ratio # L_t(x_t(l+1)) / L(t(x_t(l))) * kernel_ratio
+
+                        bool_mph_log_ratio = log_ratio_mph < torch.log(torch.rand_like(log_ratio_mph) + 1e-7) # acceptance prob. 보다 크면 reject
+                        bool_mph_accept = torch.arange(len(bool_check), device=bool_check.device)[bool_check][bool_neg_log_ratio][~bool_mph_log_ratio] # accept 된 image num 확인
+                        bool_mph_check_accept = torch.arange(len(x_check), device=bool_check.device)[bool_neg_log_ratio][~bool_mph_log_ratio] # 위와 동일? x_check이랑 bool_check 길이가 다른 경우가 있는지?
+                        print(len(log_ratio_mph), len(bool_mph_accept))
+
+                        x_check[bool_mph_check_accept] = x_back[~bool_mph_log_ratio] # check update
+                        log_ratio_prev[bool_mph_accept] = log_ratio_back[~bool_mph_log_ratio] # log_ratio_prev update
+                        mu_cur[~bool_mph_log_ratio] = mu_back[~bool_mph_log_ratio] # mu update
+
+                    x_next[bool_reject] = x_check[bool_neg_log_ratio] # MH-sampling 완료
+                    # log_ratio_prev_check[~bool_neg_log_ratio] = log_ratio[~bool_neg_log_ratio]
 
         return x_next, lst_idx, log_ratio_prev, per_sample_nfe
 
-    def save_img(images, index, save_type="npz", batch_size=100):
+    def save_img(images, index, save_type="npz", batch_size=100, num_iter=-1):
         ## Save images.
         images_np = (images * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
         if save_type == "png":
@@ -181,7 +171,13 @@ def diffrs_sampler(
 
         elif save_type == "npz":
             # r = np.random.randint(1000000)
-            with tf.io.gfile.GFile(os.path.join(outdir, f"samples_{index}.npz"), "wb") as fout:
+            if num_iter != -1:
+                file_name_npz = os.path.join(outdir, f"samples_{index}_{num_iter}.npz")
+                file_name_png = os.path.join(outdir, f"sample_{index}_{num_iter}.png")
+            else:
+                file_name_npz = os.path.join(outdir, f"samples_{index}.npz")
+                file_name_png = os.path.join(outdir, f"sample_{index}.png")
+            with tf.io.gfile.GFile(file_name_npz, "wb") as fout:
                 io_buffer = io.BytesIO()
                 if class_labels == None:
                     np.savez_compressed(io_buffer, samples=images_np)
@@ -191,15 +187,22 @@ def diffrs_sampler(
 
             nrow = int(np.sqrt(images_np.shape[0]))
             image_grid = make_grid(torch.tensor(images_np).permute(0, 3, 1, 2) / 255., nrow, padding=2)
-            with tf.io.gfile.GFile(os.path.join(outdir, f"sample_{index}.png"), "wb") as fout:
+            with tf.io.gfile.GFile(file_name_png, "wb") as fout:
                 save_image(image_grid, fout)
+
+
+
+    if dg_weight_2nd_order == 0.:
+        dg_weight_2nd_order = dg_weight_1st_order
+    print(f'dg_weight_1st_order: {dg_weight_1st_order}')
+    print(f'dg_weight_2nd_order: {dg_weight_2nd_order}')
 
     # Adjust noise levels based on what's supported by the network.
     sigma_min = max(sigma_min, net.sigma_min)
     sigma_max = min(sigma_max, net.sigma_max)
 
     # Time step discretization.
-    step_indices = torch.arange(num_steps, dtype=torch.float32, device=latents.device)
+    step_indices = torch.arange(num_steps, dtype=torch.float64, device=latents.device)
     t_steps = (sigma_max ** (1 / rho) + step_indices / (num_steps - 1) * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
     t_steps = torch.cat([net.round_sigma(t_steps), torch.zeros_like(t_steps[:1])]) # t_N = 0
 
@@ -214,17 +217,16 @@ def diffrs_sampler(
         # Warmup
         lst_adaptive = [[] for i in range(len(t_steps))]
         lst_adaptive2 = [[] for i in range(len(t_steps))]
-        x_next = latents.to(torch.float32) * t_steps[0]
+        x_next = latents.to(torch.float64) * t_steps[0]
         lst_idx = torch.zeros((latents.shape[0],), device=latents.device).long()
-        log_ratio_prev = torch.zeros((latents.shape[0],), device=latents.device)
-        per_sample_nfe = torch.zeros((latents.shape[0],), device=latents.device).long()
+        log_ratio_prev = torch.zeros((latents.shape[0],))
+        per_sample_nfe = torch.zeros((latents.shape[0],)).long()
         num_warm = 0
         while num_warm < iter_warmup:
-            
             x_next, lst_idx, log_ratio_prev, per_sample_nfe = sampling_loop(x_next, lst_idx, log_ratio_prev, per_sample_nfe, class_labels, warmup=True)
             bool_fin = lst_idx == num_steps
             if bool_fin.sum() > 0:
-                x_next[bool_fin] = torch.randn_like(x_next[bool_fin]).to(torch.float32) * t_steps[0]
+                x_next[bool_fin] = torch.randn_like(x_next[bool_fin]).to(torch.float64) * t_steps[0]
                 lst_idx[bool_fin] = torch.zeros_like(lst_idx[bool_fin]).long()
                 if (class_labels is not None) & (class_idx is None):
                     class_labels[bool_fin] = torch.eye(net.label_dim, device=class_labels.device)[torch.randint(net.label_dim, size=[bool_fin.sum()], device=class_labels.device)]
@@ -242,26 +244,20 @@ def diffrs_sampler(
             lst_adaptive = pickle.load(f)
         with open(adaptive_pickle2, 'rb') as f:
             lst_adaptive2 = pickle.load(f)
-    adaptive = torch.zeros_like(t_steps)
+    adaptive = torch.zeros_like(t_steps).cpu()
     for k in range(len(t_steps)):
-        if no_zero:
-            adaptive[k] = torch.quantile(lst_adaptive[k], rej_percentile).item()
-        else:
-            adaptive[k] = max(0., torch.quantile(lst_adaptive[k], rej_percentile).item())
+        adaptive[k] = max(0., torch.quantile(lst_adaptive[k], dg_weight_1st_order).item())
     print(adaptive)
-    adaptive2 = torch.zeros_like(t_steps)
+    adaptive2 = torch.zeros_like(t_steps).cpu()
     for k in range(len(t_steps)):
-        if no_zero:
-            adaptive2[k] = torch.quantile(lst_adaptive2[k], rej_percentile).item()
-        else:
-            adaptive2[k] = max(0., torch.quantile(lst_adaptive2[k], rej_percentile).item())
+        adaptive2[k] = max(0., torch.quantile(lst_adaptive2[k], dg_weight_2nd_order).item())
     print(adaptive2)
 
     # Main sampling loop.
-    x_next = latents.to(torch.float32) * t_steps[0]
+    x_next = latents.to(torch.float64) * t_steps[0]
     lst_idx = torch.zeros((latents.shape[0],), device=latents.device).long()
-    log_ratio_prev = torch.zeros((latents.shape[0],), device=latents.device)
-    per_sample_nfe = torch.zeros((latents.shape[0],), device=latents.device).long()
+    log_ratio_prev = torch.zeros((latents.shape[0],))
+    per_sample_nfe = torch.zeros((latents.shape[0],)).long()
 
     pbar = tqdm(desc='Number of re-init. samples')
 
@@ -276,8 +272,11 @@ def diffrs_sampler(
         if bool_fin.sum() > 0:
             if (batch_size - total_samples % batch_size) <= bool_fin.sum():
                 x_fin[total_samples % batch_size:] = x_next[bool_fin][:batch_size - total_samples % batch_size]
-                r = np.random.randint(1000000)
-                save_img(x_fin, index=r)
+                if not do_seed:
+                    r = np.random.randint(1000000)
+                    save_img(x_fin, index=r)
+                else:
+                    save_img(x_fin, index=index)
                 index += 1
                 x_fin = torch.zeros_like(x_next)
 
@@ -286,9 +285,7 @@ def diffrs_sampler(
             else:
                 x_fin[total_samples % batch_size:total_samples % batch_size + bool_fin.sum()] = x_next[bool_fin]
                 total_samples += bool_fin.sum()
-            x_next[bool_fin] = torch.randn_like(x_next[bool_fin]).to(torch.float32) * t_steps[0]
-            print(bool_fin)
-            print(lst_idx)
+            x_next[bool_fin] = torch.randn_like(x_next[bool_fin]).to(torch.float64) * t_steps[0]
             lst_idx[bool_fin] = torch.zeros_like(lst_idx[bool_fin]).long()
             log_ratio_prev[bool_fin] = torch.zeros_like(log_ratio_prev[bool_fin])
 
@@ -343,9 +340,11 @@ def diffrs_sampler(
 @click.option('--seed',                    help='Seed number',                 metavar='INT',                       type=click.IntRange(min=0), default=0, show_default=True)
 @click.option('--num_samples',             help='Num samples',                 metavar='INT',                       type=click.IntRange(min=1), default=50000, show_default=True)
 @click.option('--save_type',               help='png or npz',                  metavar='png|npz',                   type=click.Choice(['png', 'npz']), default='npz')
-@click.option('--device',                  help='Device', metavar='STR',                                            type=str, default='hpu')
+@click.option('--device',                  help='Device', metavar='STR',                                            type=str, default='cuda:0')
 
 ## DG configuration
+@click.option('--dg_weight_1st_order',     help='Weight of DG for 1st prediction',       metavar='FLOAT',           type=float, default=0., show_default=True)
+@click.option('--dg_weight_2nd_order',     help='Weight of DG for 2nd prediction',       metavar='FLOAT',           type=click.FloatRange(min=0), default=0., show_default=True)
 @click.option('--time_min',                help='Minimum time[0,1] to apply DG', metavar='FLOAT',                   type=click.FloatRange(min=0., max=1.), default=0.01, show_default=True)
 @click.option('--time_max',                help='Maximum time[0,1] to apply DG', metavar='FLOAT',                   type=click.FloatRange(min=0., max=1.), default=1.0, show_default=True)
 @click.option('--boosting',                help='If true, dg scale up low log ratio samples', metavar='INT',        type=click.IntRange(min=0), default=0, show_default=True)
@@ -354,10 +353,9 @@ def diffrs_sampler(
 @click.option('--pretrained_classifier_ckpt',help='Path of ADM classifier(latent extractor)',  metavar='STR',       type=str, default='checkpoints/ADM_classifier/32x32_classifier.pt', show_default=True)
 @click.option('--discriminator_ckpt',      help='Path of discriminator',  metavar='STR',                            type=str, default='checkpoints/discriminator/cifar_uncond/discriminator_60.pt', show_default=True)
 
-## DiffRS configuration
-@click.option('--rej_percentile',          help='Rejection percentile gamma',       metavar='FLOAT',                type=float, default=0., show_default=True)
+## Discriminator architecture
 @click.option('--cond',                    help='Is it conditional discriminator?', metavar='INT',                  type=click.IntRange(min=0, max=1), default=0, show_default=True)
-@click.option('--backsteps',               help='backsteps', metavar='INT',                                         type=click.IntRange(min=0), default=1, show_default=True)
+@click.option('--backsteps',               help='backsteps', metavar='INT',                                         type=click.IntRange(min=0), default=0, show_default=True)
 @click.option('--min_backsteps',           help='min_backsteps', metavar='INT',                                     type=click.IntRange(min=0), default=0, show_default=True)
 @click.option('--max_backsteps',           help='max_backsteps', metavar='INT',                                     type=click.IntRange(min=1), default=18, show_default=True)
 @click.option('--mode',                    help='Mode', metavar='STR',                                              type=str, default='default')
@@ -365,9 +363,10 @@ def diffrs_sampler(
 @click.option('--adaptive_pickle2',        help='Path of adaptive2',  metavar='STR',                                type=str, default='None', show_default=True)
 @click.option('--iter_warmup',             help='iteration of warmup', metavar='INT',                               type=click.IntRange(min=0), default=10, show_default=True)
 @click.option('--max_iter',                help='max_iter', metavar='INT',                                          type=click.IntRange(min=0), default=999999, show_default=True)
-@click.option('--no_zero',                 help='Use zero minimum for M', metavar='INT',                            type=click.IntRange(min=0, max=1), default=0, show_default=True)
+@click.option('--snr',                     help='SNR', metavar='FLOAT',                                             type=click.FloatRange(min=0.), default=0., show_default=True)
+@click.option('--litrs',                   help='langevin_iter', metavar='INT',                                     type=click.IntRange(min=0), default=3, show_default=True)
 
-def main(boosting, time_min, time_max, rej_percentile, cond, pretrained_classifier_ckpt, discriminator_ckpt, save_type, batch_size, do_seed, seed, num_samples, network_pkl, outdir, class_idx, device, backsteps, min_backsteps, max_backsteps, mode, adaptive_pickle, adaptive_pickle2, iter_warmup, max_iter, no_zero, **sampler_kwargs):
+def main(boosting, time_min, time_max, dg_weight_1st_order, dg_weight_2nd_order, cond, pretrained_classifier_ckpt, discriminator_ckpt, save_type, batch_size, do_seed, snr, litrs, seed, num_samples, network_pkl, outdir, class_idx, device, backsteps, min_backsteps, max_backsteps, mode, adaptive_pickle, adaptive_pickle2, iter_warmup, max_iter, **sampler_kwargs):
     ## Load pretrained score network.
     print(f'Loading network from "{network_pkl}"...')
     with open(network_pkl, 'rb') as f:
@@ -379,8 +378,7 @@ def main(boosting, time_min, time_max, rej_percentile, cond, pretrained_classifi
     else:
         depth = 2
     discriminator = classifier_lib.get_discriminator(pretrained_classifier_ckpt, discriminator_ckpt,
-                                                     net.label_dim and cond, net.img_resolution, device,
-                                                     depth=depth, enable_grad=False)
+                                                 net.label_dim and cond, net.img_resolution, device, depth=depth, enable_grad=True)
     print(discriminator)
     vpsde = classifier_lib.vpsde()
 
@@ -399,7 +397,7 @@ def main(boosting, time_min, time_max, rej_percentile, cond, pretrained_classifi
         random.seed(0)
         np.random.seed(0)
         torch.manual_seed(0)
-        torch.hpu.manual_seed_all(0)
+        torch.cuda.manual_seed_all(0)
     ## Pick latents and labels.
     latents = torch.randn([batch_size, net.img_channels, net.img_resolution, net.img_resolution], device=device)
     class_labels = None
@@ -411,12 +409,10 @@ def main(boosting, time_min, time_max, rej_percentile, cond, pretrained_classifi
 
     ## Generate images.
     sampler_kwargs = {key: value for key, value in sampler_kwargs.items() if value is not None}
-    diffrs_sampler(boosting, time_min, time_max, vpsde, rej_percentile, discriminator,
-                   net, latents, class_labels, randn_like=torch.randn_like, backsteps=backsteps,
-                   min_backsteps=min_backsteps, max_backsteps=max_backsteps, mode=mode, outdir=outdir,
-                   adaptive_pickle=adaptive_pickle, adaptive_pickle2=adaptive_pickle2, class_idx=class_idx,
-                   batch_size=batch_size, num_samples=num_samples, iter_warmup=iter_warmup, max_iter=max_iter,
-                   no_zero=no_zero, **sampler_kwargs)
+    edm_sampler(boosting, time_min, time_max, vpsde, dg_weight_1st_order, dg_weight_2nd_order, discriminator,
+                net, latents, class_labels, randn_like=torch.randn_like, backsteps=backsteps, min_backsteps=min_backsteps,
+                max_backsteps=max_backsteps, mode=mode, outdir=outdir, adaptive_pickle=adaptive_pickle, adaptive_pickle2=adaptive_pickle2, class_idx=class_idx,
+                batch_size=batch_size, num_samples=num_samples, iter_warmup=iter_warmup, max_iter=max_iter, do_seed=do_seed, snr=snr, litrs=litrs, **sampler_kwargs)
 
 #----------------------------------------------------------------------------
 if __name__ == "__main__":
