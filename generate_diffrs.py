@@ -40,7 +40,7 @@ def diffrs_sampler(
 
     S_churn_max = S_churn_max.to(torch.float32)
     gamma_vec = gamma_vec.to(torch.float32)
-    # print(S_churn_vec.dtype, S_churn_max.dtype, S_noise_vec.dtype, gamma_vec.dtype)
+    print("S_churn ",S_churn_vec.dtype, S_churn_max.dtype, S_noise_vec.dtype, gamma_vec.dtype)
 
     def sampling_loop(x_next, lst_idx, log_ratio_prev, per_sample_nfe, labels, warmup=False):
         t_cur = t_steps[lst_idx]
@@ -263,9 +263,9 @@ def diffrs_sampler(
 
     # Main sampling loop.
     x_next = latents.to(torch.float32) * t_steps[0]
-    lst_idx = torch.zeros((latents.shape[0],), device=latents.device).long()
+    lst_idx = torch.zeros((latents.shape[0],), device=latents.device).to(torch.int32)
     log_ratio_prev = torch.zeros((latents.shape[0],), device=latents.device)
-    per_sample_nfe = torch.zeros((latents.shape[0],), device=latents.device).long()
+    per_sample_nfe = torch.zeros((latents.shape[0],), device=latents.device).to(torch.int32)
 
     pbar = tqdm(desc='Number of re-init. samples')
 
