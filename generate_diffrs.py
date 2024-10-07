@@ -281,6 +281,7 @@ def diffrs_sampler(
         bool_fin = lst_idx == num_steps
         if bool_fin.sum() > 0:
             if (batch_size - total_samples % batch_size) <= bool_fin.sum():
+                print("here")
                 x_fin[total_samples % batch_size:] = x_next[bool_fin][:batch_size - total_samples % batch_size]
                 r = np.random.randint(1000000)
                 save_img(x_fin, index=r)
