@@ -295,6 +295,7 @@ def diffrs_sampler(
                 print(x_fin.dtype)
                 print(x_next[bool_fin].dtype)
             bool_fin_temp = cpy.deepcopy(bool_fin)
+            print(bool_fin_temp)
             x_next[bool_fin_temp] = torch.randn_like(x_next[bool_fin_temp]).to(torch.float32) * t_steps[0]
             # bool_fin = cpy.deepcopy(bool_fin_temp)
             print(bool_fin, flush = True)
