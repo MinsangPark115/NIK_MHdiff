@@ -39,6 +39,7 @@ def diffrs_sampler(
     gamma_vec = torch.minimum(S_churn_vec / num_steps, S_churn_max)
 
     S_churn_max = S_churn_max.to(torch.float32)
+    gamma_vec = gamma_vec.to(torch.float32)
     print(S_churn_vec.dtype, S_churn_max.dtype, S_noise_vec.dtype, gamma_vec.dtype)
 
     def sampling_loop(x_next, lst_idx, log_ratio_prev, per_sample_nfe, labels, warmup=False):
@@ -404,10 +405,10 @@ def main(boosting, time_min, time_max, rej_percentile, cond, pretrained_classifi
         torch.manual_seed(0)
         torch.hpu.manual_seed_all(0)
     ## Pick latents and labels.
-    latents = torch.randn([batch_size, net.img_channels, net.img_resolution, net.img_resolution], device=device)
+    latents = torch.randn([batch_size, net.img_channels, net.img_resolution, net.img_resolution], device=device, dtype=torch.float32)
     class_labels = None
     if net.label_dim:
-        class_labels = torch.eye(net.label_dim, device=device)[torch.randint(net.label_dim, size=[batch_size], device=device)]
+        class_labels = torch.eye(net.label_dim, device=device, dtype=torch.float32)[torch.randint(net.label_dim, size=[batch_size], device=device)]
     if class_idx is not None:
         class_labels[:, :] = 0
         class_labels[:, class_idx] = 1
