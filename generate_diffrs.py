@@ -281,7 +281,6 @@ def diffrs_sampler(
         bool_fin = lst_idx == num_steps
         if bool_fin.sum() > 0:
             if (batch_size - total_samples % batch_size) <= bool_fin.sum():
-                print("here")
                 x_fin[total_samples % batch_size:] = x_next[bool_fin][:batch_size - total_samples % batch_size]
                 r = np.random.randint(1000000)
                 save_img(x_fin, index=r)
@@ -291,11 +290,10 @@ def diffrs_sampler(
                 x_fin[:bool_fin.sum() - batch_size + total_samples % batch_size] = x_next[bool_fin][batch_size - total_samples % batch_size:]
                 total_samples += bool_fin.sum()
             else:
-                print("here_22")
+                print(bool_fin)
                 x_fin[total_samples % batch_size:total_samples % batch_size + bool_fin.sum()] = x_next[bool_fin]
                 total_samples += bool_fin.sum()
-                print(x_fin.dtype)
-                print(x_next[bool_fin].dtype)
+                print(bool_fin)
             bool_fin_temp = cpy.deepcopy(bool_fin)
             print(bool_fin_temp)
             x_next[bool_fin_temp] = torch.randn_like(x_next[bool_fin_temp]).to(torch.float32) * t_steps[0]
