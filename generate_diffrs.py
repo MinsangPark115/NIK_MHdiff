@@ -276,8 +276,9 @@ def diffrs_sampler(
     current_time = time.time()
     while total_samples <= num_samples:
         x_next, lst_idx, log_ratio_prev, per_sample_nfe = sampling_loop(x_next, lst_idx, log_ratio_prev, per_sample_nfe, class_labels)
-        print([x_next.dtype, lst_idx.dtype, log_ratio_prev.dtype, per_sample_nfe.dtype], flush=True)
+        # print([x_next.dtype, lst_idx.dtype, log_ratio_prev.dtype, per_sample_nfe.dtype], flush=True)
         bool_fin = lst_idx == num_steps
+        print(bool_fin)
         if bool_fin.sum() > 0:
             if (batch_size - total_samples % batch_size) <= bool_fin.sum():
                 x_fin[total_samples % batch_size:] = x_next[bool_fin][:batch_size - total_samples % batch_size]
