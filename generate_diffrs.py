@@ -278,7 +278,6 @@ def diffrs_sampler(
         x_next, lst_idx, log_ratio_prev, per_sample_nfe = sampling_loop(x_next, lst_idx, log_ratio_prev, per_sample_nfe, class_labels)
         # print([x_next.dtype, lst_idx.dtype, log_ratio_prev.dtype, per_sample_nfe.dtype], flush=True)
         bool_fin = lst_idx == num_steps
-        print(bool_fin)
         if bool_fin.sum() > 0:
             if (batch_size - total_samples % batch_size) <= bool_fin.sum():
                 x_fin[total_samples % batch_size:] = x_next[bool_fin][:batch_size - total_samples % batch_size]
@@ -292,6 +291,8 @@ def diffrs_sampler(
             else:
                 x_fin[total_samples % batch_size:total_samples % batch_size + bool_fin.sum()] = x_next[bool_fin]
                 total_samples += bool_fin.sum()
+                print(x_fin.dtype)
+                print(x_next[bool_fin].dtype)
             x_next[bool_fin] = torch.randn_like(x_next[bool_fin]).to(torch.float32) * t_steps[0]
             print(bool_fin, flush = True)
             print(lst_idx, flush = True)
