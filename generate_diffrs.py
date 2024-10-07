@@ -293,7 +293,9 @@ def diffrs_sampler(
                 total_samples += bool_fin.sum()
                 print(x_fin.dtype)
                 print(x_next[bool_fin].dtype)
+            bool_fin_temp = bool_fin.clone()
             x_next[bool_fin] = torch.randn_like(x_next[bool_fin]).to(torch.float32) * t_steps[0]
+            bool_fin = bool_fin_temp.clone()
             print(bool_fin, flush = True)
             print(lst_idx, flush = True)
             lst_idx[bool_fin] = torch.zeros_like(lst_idx[bool_fin]).long()
